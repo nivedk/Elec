@@ -29,7 +29,7 @@ USART accepts thirty combinations of the following as valid frame formats
 * no, even or odd parity bit
 * 1 or 2 stop bits
 
-![alt text](https://github.com/nivedk/Elec/blob/master/notes/usartframe_format.png")
+![alt text](https://github.com/nivedk/Elec/blob/master/notes/usartframe_format.png)
 
 
 
