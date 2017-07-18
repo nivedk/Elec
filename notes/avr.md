@@ -100,28 +100,31 @@ void USART_Init( unsigned int baud ){
 #define MYUBRR FOSC/16/BAUD-1
 
 void USART_Init( unsigned int ubrr){
-	/*Set baud rate */
+	/*Set baud rate*/
 	UBRRH = (unsigned char)(ubrr>>8);
 	UBRRL = (unsigned char)ubrr;
-	/*Enable receiver and transmitter */
+	/*Enable receiver and transmitter*/
 	UCSRB = (1<<RXEN)|(1<<TXEN);
-	/* Set frame format: 8data, 2stop bit */
+	/* Set frame format: 8data, 2stop bit*/
+  //USBS = 1 means two stop bits
+  //URSEL must be 1 when acessing UCRSC
+  //(3<<UCSZ0) is the same as (1<<UCSZ1)|(1<<UCZ0)
 	UCSRC = (1<<URSEL)|(1<<USBS)|(3<<UCSZ0);
 }
 
 void USART_Transmit( unsigned char data )
 {
-	/* Wait for empty transmit buffer */
+	/* Wait for empty transmit buffer*/
 	while ( !( UCSRA & (1<<UDRE)) );
-	/* Put data into buffer, sends the data */
+	/* Put data into buffer, sends the data*/
 	UDR = data;
 }
 
 unsigned char USART_Receive( void )
 {
-	/* Wait for data to be received */
+	/* Wait for data to be received*/
 	while ( !(UCSRA & (1<<RXC)) );
-	/* Get and return received data from buffer */
+	/* Get and return received data from buffer*/
 	return UDR;
 }
 
@@ -140,9 +143,156 @@ void main( void )
 
 ```
 
+### SPI - Serial Peripheral Interface
+
+* There can be multiple slaves and masters
+* Employs full duplex data transfer. ie: Data is sent and received at the same time
+* The SS pin (slave select pin) is used to select the slave, specify its pin modes. If SS is high, all slave SPI pins are normal inputs, will not accept any SPI input, hence SS pin in slave must be held in low state. In case of SS pin of the master, is the SS pin is configured as an output pin, it does not affect the SPI, however, if it is configurted, as an input, it must be held high, otherwise, it will think that another mastr is using it as a slave.
+
+#### Register Description
+
+* SPCR – SPI Control Register - This register is basically the master register i.e. it contains the bits to initialize SPI and control it. Stuff about each bit in the register [here](http://maxembedded.com/2013/11/the-spi-of-the-avr/). Has stuff like data order, SPI enable, master/slave select, clock polarity, clock rate etc.
+* SPSR - SPI Status Register The SPI Status Register is the register from where we can get the status of the SPI bus and interrupt flag is also set in this register. Following are the bits in the SPSR register. Has a couple of flags, reserverd bits and a bit for double speed mode.
+* SPDR - The SPI Data REgister - The data register.
+
+#### Data modes
+
+* CPOL - Clock Polarity
+  * If CPOL is 0, SCK is low when idle
+  * If CPOL is 1, SCK is high when idle
+* CPHA - Clock Phase
+  * When CPHA = 0, data is sampled at clock’s rising/leading edge.
+  * When CPHA = 1, data is sampled at clock’s falling/trailing edge.
+  * More info [here](http://maxembedded.com/2013/11/serial-peripheral-interface-spi-basics/#CPOL_CPHA)
+
+
+#### Master code
+
+```c
+
+
+#define F_CPU 14745600UL // Clock Speed
+//#define BAUD 9600
+
+#include <avr/io.h>
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+
+//Initialize SPI Master Device
+void spi_init_master (void)
+{
+    DDRB = (1<<5)|(1<<3);              //Set MOSI, SCK as Output
+    SPCR = (1<<SPE)|(1<<MSTR)|(1<<SPR0); //Enable SPI, Set as Master
+                                       //Prescaler: Fosc/16, Enable Interrupts
+}
+
+//Function to send and receive data
+unsigned char spi_tranceiver (char data)
+{
+    SPDR = data;                       //Load data into the buffer
+    while(!(SPSR & (1<<SPIF) ));       //Wait until transmission complete
+    return(SPDR);                      //Return received data
+}
+
+//Function to blink LED
+/*
+void led_blink (uint16_t i)
+{
+    //Blink LED "i" number of times
+    for (; i>0; --i)
+    {
+        PORTD|=(1<<0);
+        _delay_ms(100);
+        PORTD=(0<<0);
+        _delay_ms(100);
+    }
+}*/
+
+//Main
+int main(void)
+{
+    spi_init_master();                  //Initialize SPI Master
+    DDRD |= 0x01;                       //PD0 as Output
+
+    unsigned char data;                 //Received data stored here
+    uint8_t x = 0;                      //Counter value which is sent
+
+    while(1)
+    {
+        data = 0x00;                    //Reset ACK in "data"
+        data = spi_tranceiver(++x);     //Send "x", receive ACK in "data"
+
+
+        /*if(data == ACK) {               //Check condition
+            //If received data is the same as ACK, blink LED "x" number of times
+            //led_blink(x);
+        }
+        else {
+            If received data is not ACK, then blink LED for a long time so as to determine error
+            led_blink(LONG_TIME);
+        }*/
+        _delay_ms(500);                 //Wait
+    }
+}
+
+
+
+```
+#### Slave Code
+
+```c
+
+#define F_CPU 14745600UL // Clock Speed
+//#define BAUD 9600
+
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+
+void spi_init_slave (void)
+{
+    DDRB=(1<<6);                                  //MISO as OUTPUT
+    SPCR=(1<<SPE);                                //Enable SPI
+}
+
+//Function to send and receive data
+unsigned char spi_tranceiver (unsigned char data)
+{
+    SPDR = data;                                  //Load data into buffer
+    while(!(SPSR & (1<<SPIF) ));                  //Wait until transmission complete
+    return(SPDR);                                 //Return received data
+}
+
+int main(void)
+{         
+
+    spi_init_slave();                             //Initialize slave SPI
+    unsigned char data, buffer[10];
+    DDRA  = 0x00;                                 //Initialize PORTA as INPUT
+    PORTA = 0xFF;                                 //Enable Pull-Up Resistors
+    while(1)
+    {
+
+        data = spi_tranceiver(ACK);               //Receive data, send ACK
+                                 //Display received data
+        _delay_ms(20);                            //Wait
+    }
+}
+
+
+
+```
+
+
+
 
 
 ### Full forms
+
 * **UDR -** USART data register
 * **UCSRA -** USART Control and Status Register A
 * **UBBR -** USART Baud Rate Register
+* **MISO -** (Master In Slave Out): the input of the Master's shift register, and the output of the Slave's shift register.
+* **MOSI -** (Master Out Slave In): the output of the Master's shift register, and the input of the Slave's shift register.
+* **SCK -** (Serial Clock): In the Master, this is the output of the clock generator. In the Slave, it is the input clock signal.
